@@ -32,12 +32,11 @@ const octokit = new Octokit({
     return result.status
   }
 
-  const rawdata = fs.readFileSync('env-example', 'utf8')
+  const rawdata = fs.readFileSync('secrets', 'utf8')
   const data = dotenv.parse(rawdata)
   console.log(data)
 
   const pubKey = await getPubKey(owner, repo)
-  console.log(pubKey.key_id)
   const encrypt = async (pubkey, secret) => {
     await sodium.ready
     const binkey = sodium.from_base64(pubkey, sodium.base64_variants.ORIGINAL)
@@ -50,12 +49,9 @@ const octokit = new Octokit({
   const secretKeys = Object.keys(data)
   for (let index = 0; index < secretKeys.length; index++) {
     const keyName = secretKeys[index]
-    // console.log(keyName)
     const value = data[keyName]
-    // console.log(value)
     const encrypted = await encrypt(pubKey.key, value)
-    console.log(encrypted)
-    const anu = await upsert(owner, repo, keyName, encrypted, pubKey.key_id)
-    console.log(anu)
+    const response = await upsert(owner, repo, keyName, encrypted, pubKey.key_id)
+    console.log(response)
   }
 })()
