@@ -32,7 +32,7 @@ const octokit = new Octokit({
     return result.status
   }
 
-  const rawdata = fs.readFileSync('secrets', 'utf8')
+  const rawdata = fs.readFileSync('.secrets', 'utf8')
   const data = dotenv.parse(rawdata)
   console.log(data)
 
