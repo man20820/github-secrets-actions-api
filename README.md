@@ -4,8 +4,9 @@ Allow you to bulk input actions -> secrets
 
 ## Install
 1. set dot env
-2. copy your secret to .secret
-3. npm install
+2. copy your secrets to .secrets
+3. copy your variables to .vars
+4. npm install
 
 ## Github Secrets
 ### Upsert
