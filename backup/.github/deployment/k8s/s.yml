@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ APP_NAME }}-service
+  namespace: {{ NAMESPACE }}
+  annotations:
+spec:
+  ports:
+  - name: {{ PORT }}app
+    port: {{ PORT }}
+    protocol: {{ PROTOCOL }}
+    targetPort: {{ PORT }}
+  selector:
+    name: {{ APP_NAME }}
+  type: ClusterIP

@@ -20,13 +20,14 @@ const octokit = new Octokit({
     const vars = await octokit.request('GET /repos/{owner}/{repo}/actions/variables', {
       owner,
       repo,
+      per_page: 30,
       page
     })
     return vars.data
   }
   const listVars = await getVars(owner, repo)
   allVars = allVars.concat(listVars.variables);
-  if (listVars.variables.length < 10) {
+  if (listVars.variables.length < 30) {
     break; // end of results
   }
   page++

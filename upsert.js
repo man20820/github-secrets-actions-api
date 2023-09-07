@@ -27,7 +27,10 @@ const octokit = new Octokit({
       repo,
       secret_name: secretName,
       encrypted_value: encryptedValue,
-      key_id: keyId
+      key_id: keyId,
+      headers: {
+        'X-GitHub-Api-Version': '2022-11-28'
+      }
     })
     return result.status
   }

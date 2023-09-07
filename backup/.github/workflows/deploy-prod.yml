@@ -1,0 +1,226 @@
+name: PRODUCTION build and deploy
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+env:
+  CR: 'ghcr.io'
+  CR_USER: ${{ secrets.CR_USER }}
+  CR_PAT: ${{ secrets.CR_PAT }}
+  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+  TELEGRAM_BOT_ID: ${{ secrets.TELEGRAM_BOT_ID }}
+  GITHUB_REPO: ${{ github.repository }}
+  GITHUB_URL: ${{ github.server_url }}/${{ github.repository }}/actions/
+  GITHUB_ACTIONS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+  IMAGE_NAME_RAW: 'ghcr.io/${{ github.repository }}:${{ github.sha }}'
+  KUBE_HOST: '${{ secrets.PROD_KUBE_HOST }}'
+  KUBE_SECRET: '${{ secrets.PROD_KUBE_SECRET }}'
+  APP_NAME: ${{ github.event.repository.name }}
+  NAMESPACE: '${{ secrets.PROD_NAMESPACE }}'
+  PORT: '${{ secrets.PROD_PORT }}'
+  PROTOCOL: '${{ secrets.PROD_PROTOCOL }}'
+  CPU_LIMIT: '${{ secrets.PROD_CPU_LIMIT }}'
+  MEMORY_LIMIT: '${{ secrets.PROD_MEMORY_LIMIT }}'
+  CPU_REQUEST: '${{ secrets.PROD_CPU_REQUEST }}'
+  MEMORY_REQUEST: '${{ secrets.PROD_MEMORY_REQUEST }}'
+  MIN_REPLICAS: '${{ secrets.PROD_MIN_REPLICAS }}'
+  MAX_REPLICAS: '${{ secrets.PROD_MAX_REPLICAS }}'
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-20.04
+    timeout-minutes: 30
+    steps:
+      - name: checkout code
+        uses: actions/checkout@v2
+
+      - name: downcase image name
+        run: |
+          IMAGE_NAME_LOWERCASE=`echo "${{ env.IMAGE_NAME_RAW }}" | awk '{print tolower($0)}'` >> ${GITHUB_ENV}
+          echo "IMAGE_NAME=$IMAGE_NAME_LOWERCASE" >> ${GITHUB_ENV}
+          echo "$IMAGE_NAME_LOWERCASE" >> IMAGE_NAME.txt
+
+      - name: preparing
+        run: |-
+          ls -al deployment/config/
+          chmod +x -R deployment/config/
+          deployment/config/env-filter.sh
+
+      - name: login to CR
+        run: |-
+          echo ${{ env.CR_PAT }} | docker login ghcr.io -u ${{ env.CR_USER }} --password-stdin
+
+      - name: publish docker image
+        run: |-
+          docker build -t ${{ env.IMAGE_NAME }} .
+          docker push ${{ env.IMAGE_NAME }}
+
+      - name: logout from cr
+        run: |-
+          docker logout
+
+      - name: trivy vulnerability scanner
+        id: trivy_install
+        run: |-
+          wget https://github.com/aquasecurity/trivy/releases/download/v0.18.3/trivy_0.18.3_Linux-64bit.deb
+          sudo dpkg -i trivy_0.18.3_Linux-64bit.deb
+
+      - name: Run Trivy vulnerability scanner
+        id: trivy_run
+        run: |-
+          result=`GITHUB_TOKEN=${{ env.CR_PAT }} trivy fs --security-checks vuln .`
+          echo "$result" > result.txt
+          total=`echo "$result" | awk '/Total:/{print}'`
+          if [ "$total" ]; then
+            echo $total > result2.txt
+            echo "%0A" >> result2.txt
+            echo "Log: ${{ env.GITHUB_ACTIONS_URL }}" >> result2.txt
+            awk '$1=$1' ORS='%0A' result2.txt > result3.txt
+            sed -i "s| |%20|g" result3.txt
+            cat result3.txt
+            echo ${{ env.GITHUB_REPO }} >> intro.txt
+            echo ${{ env.TELEGRAM_CHAT_ID }} > chat_id
+            echo ${{ env.TELEGRAM_BOT_ID }} > bot_id
+            chmod +x deployment/config/trivy.sh
+            ./deployment/config/trivy.sh
+          fi
+
+      - name: upload trivy artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: trivy
+          path: result.txt
+
+      - name: upload image name artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: IMAGE_NAME
+          path: IMAGE_NAME.txt
+
+      - name: cleaning
+        run: |-
+          rm -rf result.txt
+          rm -rf result2.txt
+          rm -rf intro.txt
+          rm -rf chat_id
+          rm -rf bot_id
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-20.04
+    timeout-minutes: 30
+    steps:
+      - name: checkout code
+        uses: actions/checkout@v2
+
+      - uses: actions/download-artifact@v3
+        with:
+          name: IMAGE_NAME
+
+      - name: preparing
+        run: |-
+          IMAGE_NAME=`cat IMAGE_NAME.txt`
+          echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
+
+      - name: preparing
+        run: |-
+          ls -al deployment/config/
+          chmod +x -R deployment/config/
+          deployment/config/env-filter.sh
+
+      - name: Set Context
+        uses: azure/k8s-set-context@v2
+        with:
+          method: service-account
+          k8s-url: '${{ env.KUBE_HOST }}'
+          k8s-secret: '${{ env.KUBE_SECRET }}'
+
+      - name: Deploy to the Kubernetes cluster
+        uses: azure/k8s-deploy@v1
+        with:
+          namespace: ${{ env.NAMESPACE }}
+          manifests: |
+            deployment/k8s/d.yml
+            deployment/k8s/h.yml
+
+  build-failed:
+    name: Notify build failed
+    needs: build
+    if: ${{ always() && contains(join(needs.build.result, ','), 'failure') }}
+    runs-on: ubuntu-20.04
+    timeout-minutes: 30
+    steps:
+      - name: checkout code
+        uses: actions/checkout@v2
+
+      - name: notify
+        run: |-
+          echo ${{ env.GITHUB_REPO }} >> intro.txt
+          echo ${{ env.TELEGRAM_CHAT_ID }} > chat_id
+          echo ${{ env.TELEGRAM_BOT_ID }} > bot_id
+          echo "Build%20DEVELOPMENT" > message
+          echo "Log: ${{ env.GITHUB_ACTIONS_URL }}" >> log.txt
+          chmod +x deployment/config/success.sh
+          ./deployment/config/failed.sh
+
+  build-success:
+    name: Notify build success
+    needs: build
+    if: ${{ always() && contains(join(needs.build.result, ','), 'success') }}
+    runs-on: ubuntu-20.04
+    timeout-minutes: 30
+    steps:
+      - name: checkout code
+        uses: actions/checkout@v2
+
+      - name: notify
+        run: |-
+          echo ${{ env.GITHUB_REPO }} >> intro.txt
+          echo ${{ env.TELEGRAM_CHAT_ID }} > chat_id
+          echo ${{ env.TELEGRAM_BOT_ID }} > bot_id
+          echo "Build%20DEVELOPMENT" > message
+          echo "Log: ${{ env.GITHUB_ACTIONS_URL }}" >> log.txt
+          chmod +x deployment/config/success.sh
+          ./deployment/config/success.sh
+
+  deploy-failed:
+    name: Notify deploy failed
+    needs: deploy
+    if: ${{ always() && contains(join(needs.deploy.result, ','), 'failure') }}
+    runs-on: ubuntu-20.04
+    timeout-minutes: 30
+    steps:
+      - name: checkout code
+        uses: actions/checkout@v2
+
+      - name: notify
+        run: |-
+          echo ${{ env.GITHUB_REPO }} >> intro.txt
+          echo ${{ env.TELEGRAM_CHAT_ID }} > chat_id
+          echo ${{ env.TELEGRAM_BOT_ID }} > bot_id
+          echo "Deploy%20DEVELOPMENT" > message
+          echo "Log: ${{ env.GITHUB_ACTIONS_URL }}" >> log.txt
+          chmod +x deployment/config/success.sh
+          ./deployment/config/failed.sh
+  deploy-success:
+    name: Notify deploy success
+    needs: deploy
+    if: ${{ always() && contains(join(needs.deploy.result, ','), 'success') }}
+    runs-on: ubuntu-20.04
+    timeout-minutes: 30
+    steps:
+      - name: checkout code
+        uses: actions/checkout@v2
+
+      - name: notify
+        run: |-
+          echo ${{ env.GITHUB_REPO }} >> intro.txt
+          echo ${{ env.TELEGRAM_CHAT_ID }} > chat_id
+          echo ${{ env.TELEGRAM_BOT_ID }} > bot_id
+          echo "Deploy%20DEVELOPMENT" > message
+          echo "Log: ${{ env.GITHUB_ACTIONS_URL }}" >> log.txt
+          chmod +x deployment/config/success.sh
+          ./deployment/config/success.sh
