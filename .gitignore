@@ -107,3 +107,5 @@ dist
 .vars
 
 secrets/
+k8s-secrets/
+backup/
