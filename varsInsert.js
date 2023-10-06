@@ -32,6 +32,7 @@ const octokit = new Octokit({
   for (let index = 0; index < keys.length; index++) {
     const keyName = keys[index]
     const value = data[keyName]
+    console.log(value)
     const response = await insert(owner, repo, keyName, value)
     console.log(response)
   }
